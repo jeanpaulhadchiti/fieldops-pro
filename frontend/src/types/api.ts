@@ -10,6 +10,14 @@ export interface Organization {
   id: string
   name: string
   created_at: string
+  organization_type?: 'Scout Group' | 'Sports Club' | 'NGO' | 'Other'
+  organization_type_other?: string | null
+  country?: string | null
+  city?: string | null
+  description?: string | null
+  is_discoverable?: boolean
+  archived_at?: string | null
+  archived_by?: string | null
 }
 
 export interface Membership {

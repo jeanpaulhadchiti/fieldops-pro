@@ -15,3 +15,20 @@ export interface RegistrationCreate {
   participant_id: string
   fee_required?: boolean
 }
+
+/** Atomic, idempotent bulk registration contracts. */
+export interface BulkRegistrationRequest {
+  event_id: string
+  participant_ids: string[]
+  idempotency_key: string
+  fee_required: boolean
+}
+
+export interface BulkRegistrationResult {
+  operation_id: string
+  idempotency_key: string
+  event_id: string
+  created_count: number
+  registrations: Registration[]
+  replayed: boolean
+}

@@ -5,6 +5,7 @@ export interface OrganizationContextValue {
   organizations: Organization[]
   organization: Organization | null
   selectOrganization: (id: string) => void
+  refreshOrganizations: (selectId?: string) => Promise<void>
   membership: Membership | null
   canManageEvents: boolean
   isLoading: boolean

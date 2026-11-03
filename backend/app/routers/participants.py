@@ -9,6 +9,7 @@ from app.dependencies import get_current_user
 from app.models.user import User
 from app.models.membership import Membership
 from app.models.participant import Participant
+from app.models.organization import Organization
 from app.schemas.participant import ParticipantCreate, ParticipantRead
 
 
@@ -48,6 +49,9 @@ def create_participant(
             status_code=403,
             detail="Permission denied"
         )
+
+    # Imports use the same organization lock while rechecking directory duplicates.
+    db.scalar(select(Organization).where(Organization.id == participant_data.organization_id).with_for_update(key_share=True))
 
     new_participant = Participant(
         organization_id=participant_data.organization_id,

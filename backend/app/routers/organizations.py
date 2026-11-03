@@ -1,5 +1,5 @@
 import uuid
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy.exc import SQLAlchemyError, IntegrityError
 from sqlalchemy.orm import Session
 from sqlalchemy import select
@@ -8,8 +8,11 @@ from app.dependencies import get_current_user
 from app.models.user import User
 from app.models.organization import Organization
 from app.models.membership import Membership
-from app.schemas.organization import OrganizationCreate, OrganizationResponse
+from app.schemas.organization import OrganizationCreate, OrganizationResponse, OrganizationSettings, OrganizationDiscoveryResult, OrganizationType
 from app.schemas.membership import MembershipResponse, MemberAddRequest, MemberRoleUpdate
+from app.organization_names import normalize_organization_name
+from app.countries import normalize_country
+from app.services.onboarding import discover, name_lock, organization_lock, rate_limit, require_reviewer
 
 router = APIRouter(
     prefix="/organizations",
@@ -27,17 +30,30 @@ def create_organization(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
-
-    new_organization = Organization(
-        name=organization_data.name
-    )
-
+    user_id = current_user.id
+    rate_limit(db, user_id, "create_organization")
     try:
+        name_lock(db, organization_data.name)
+        # Only discoverable workspaces participate in a user-facing warning.
+        # Private organizations do not change the response or become a side channel.
+        # Keep differing location/type visible for human comparison: legitimate
+        # namesakes can acknowledge the warning and create a distinct workspace.
+        matches = discover(db, organization_data.name) if len(normalize_organization_name(organization_data.name)) >= 3 else []
+        if matches and not organization_data.allow_possible_duplicate:
+            raise HTTPException(409, {
+                "code": "possible_duplicate",
+                "message": "A discoverable organization may already match. Review it or confirm this is a distinct organization.",
+                "matches": [match.model_dump(mode="json") for match in matches],
+            })
+        new_organization = Organization(
+            **organization_data.model_dump(exclude={"allow_possible_duplicate"}),
+            normalized_name=normalize_organization_name(organization_data.name),
+        )
         db.add(new_organization)
         db.flush()
 
         membership = Membership(
-            user_id=current_user.id,
+            user_id=user_id,
             organization_id=new_organization.id,
             role="Owner",
             status="active"
@@ -48,6 +64,9 @@ def create_organization(
 
         db.refresh(new_organization)
 
+    except HTTPException:
+        db.rollback()
+        raise
     except SQLAlchemyError:
         db.rollback()
         raise HTTPException(
@@ -77,6 +96,61 @@ def get_my_organizations(
     ).all()
 
     return organizations
+
+
+@router.get("/discover", response_model=OrganizationDiscoveryResult)
+def discover_organizations(
+    q: str = Query(min_length=3, max_length=150),
+    organization_type: OrganizationType | None = None,
+    country: str | None = Query(default=None, max_length=100),
+    city: str | None = Query(default=None, max_length=100),
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    rate_limit(db, current_user.id, "discovery")
+    return {"matches": discover(db, q, organization_type, country, city)}
+
+
+@router.patch("/{organization_id}/settings", response_model=OrganizationResponse)
+def update_organization_settings(
+    organization_id: uuid.UUID,
+    data: OrganizationSettings,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    require_reviewer(db, organization_id, current_user.id)
+    try:
+        organization = organization_lock(db, organization_id)
+        require_reviewer(db, organization_id, current_user.id)
+        changes = data.model_dump(exclude_unset=True)
+        if "country" in changes:
+            try:
+                changes["country"] = normalize_country(changes["country"])
+            except ValueError:
+                if changes["country"] != organization.country:
+                    raise HTTPException(422, "Select a valid ISO 3166-1 country")
+                # An unchanged historical free-text location is preserved.
+        final_type = changes.get("organization_type", organization.organization_type)
+        final_other = changes.get("organization_type_other", organization.organization_type_other)
+        if final_type == "Other":
+            # Unrelated edits to legacy Other records remain possible. Explicit
+            # selection or modification of Other must supply a meaningful label.
+            if ("organization_type" in changes or "organization_type_other" in changes) and not final_other:
+                raise HTTPException(422, "Specify organization type when selecting Other")
+        else:
+            changes["organization_type_other"] = None
+        for field, value in changes.items():
+            setattr(organization, field, value)
+        organization.normalized_name = normalize_organization_name(organization.name)
+        db.commit()
+        db.refresh(organization)
+        return organization
+    except HTTPException:
+        db.rollback()
+        raise
+    except SQLAlchemyError:
+        db.rollback()
+        raise HTTPException(500, "Could not update organization settings")
 
 
 @router.get("/{organization_id}", response_model=OrganizationResponse)
@@ -191,6 +265,13 @@ def add_organization_member(
             detail="Only the Owner can assign Admin role"
         )
 
+    # Membership creation and join approval share this lock. The unique
+    # user/organization constraint remains the final duplicate safeguard.
+    organization_lock(db, organization_id)
+    current_membership = require_reviewer(db, organization_id, current_user.id)
+    if member_data.role == "Admin" and current_membership.role != "Owner":
+        raise HTTPException(403, "Only the Owner can assign Admin role")
+
     email = str(member_data.email).lower()
 
     user = db.scalar(
@@ -278,6 +359,11 @@ def update_member_role(
             status_code=403,
             detail="Permission denied"
         )
+
+    # Role writes coordinate with approvals/settings and recheck authorization
+    # after waiting, so a stale Admin snapshot cannot promote another member.
+    organization_lock(db, organization_id)
+    current_membership = require_reviewer(db, organization_id, current_user.id)
 
     target_membership = db.scalar(
         select(Membership).where(

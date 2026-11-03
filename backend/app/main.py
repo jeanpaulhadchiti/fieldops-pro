@@ -15,6 +15,13 @@ from app.routers.organizations import router as organizations_router
 from app.routers.registrations import router as registrations_router
 from app.routers.tasks import router as tasks_router
 from app.routers.task_assignments import router as task_assignments_router
+from app.routers.bulk import router as bulk_router
+from app.routers.onboarding import router as onboarding_router
+from app.routers.archive import router as archive_router
+from app.services.archive import guard_workspace_mutation
+from app.routers.notifications import router as notifications_router
+from app.dependencies import get_current_user
+import os
 
 
 
@@ -25,12 +32,16 @@ app = FastAPI(
 )
 
 app.include_router(auth_router)
-app.include_router(organizations_router)
-app.include_router(events_router)
-app.include_router(participants_router)
-app.include_router(registrations_router)
-app.include_router(tasks_router)
-app.include_router(task_assignments_router)
+app.include_router(organizations_router, dependencies=[Depends(guard_workspace_mutation)])
+app.include_router(events_router, dependencies=[Depends(guard_workspace_mutation)])
+app.include_router(participants_router, dependencies=[Depends(guard_workspace_mutation)])
+app.include_router(registrations_router, dependencies=[Depends(guard_workspace_mutation)])
+app.include_router(tasks_router, dependencies=[Depends(guard_workspace_mutation)])
+app.include_router(task_assignments_router, dependencies=[Depends(guard_workspace_mutation)])
+app.include_router(bulk_router, dependencies=[Depends(guard_workspace_mutation)])
+app.include_router(onboarding_router, dependencies=[Depends(guard_workspace_mutation)])
+app.include_router(archive_router)
+app.include_router(notifications_router)
 
 
 app.add_middleware(
@@ -68,8 +79,18 @@ def database_health():
         )
 
     
+def require_dev_operator(current_user: User = Depends(get_current_user)):
+    # Legacy debugging remains available only by explicit deployment opt-in and
+    # a per-account operator allowlist. An ordinary signed-up account cannot use
+    # debug routes to bypass private organization discovery or tenant checks.
+    allowed = {value.strip() for value in os.getenv("FIELDOPS_DEV_USER_IDS", "").split(",") if value.strip()}
+    if os.getenv("FIELDOPS_ENABLE_DEV_ENDPOINTS", "").lower() != "true" or str(current_user.id) not in allowed:
+        raise HTTPException(404, "Not found")
+    return current_user
+
+
 @app.get("/dev/users/count")
-def count_users(db: Session = Depends(get_db)):
+def count_users(db: Session = Depends(get_db), current_user: User = Depends(require_dev_operator)):
 
     total = db.scalar(
         select(func.count(User.id))
@@ -80,7 +101,7 @@ def count_users(db: Session = Depends(get_db)):
     }
 
 @app.get("/dev/users/test")
-def get_test_user(db: Session = Depends(get_db)):
+def get_test_user(db: Session = Depends(get_db), current_user: User = Depends(require_dev_operator)):
 
     user = db.scalar(
         select(User).where(
@@ -102,7 +123,7 @@ def get_test_user(db: Session = Depends(get_db)):
 
 @app.get("/dev/organizations/demo/members")
 def get_organization_members(
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db), current_user: User = Depends(require_dev_operator)
 ):
 
     organization = db.scalar(
@@ -116,6 +137,13 @@ def get_organization_members(
             status_code=404,
             detail="Organization not found"
         )
+
+    membership = db.scalar(select(Membership).where(
+        Membership.organization_id == organization.id, Membership.user_id == current_user.id,
+        Membership.status == "active",
+    ))
+    if membership is None:
+        raise HTTPException(404, "Organization not found")
 
     members = db.execute(
         select(User.name, Membership.role)

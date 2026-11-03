@@ -26,9 +26,9 @@ export default function ParticipantCreateForm({ onCreated, onCancel }: { onCreat
       return createParticipant({ organization_id: organization.id, full_name: values.full_name })
     },
     onSuccess: async participant => {
-      await queryClient.invalidateQueries({ queryKey: participantKeys.organization(participant.organization_id) })
       reset()
       onCreated?.(participant)
+      await queryClient.invalidateQueries({ queryKey: participantKeys.organization(participant.organization_id) })
     },
   })
 

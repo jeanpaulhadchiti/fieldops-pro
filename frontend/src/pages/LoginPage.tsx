@@ -1,8 +1,8 @@
-import { useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { zodResolver } from '@hookform/resolvers/zod'
 import { ArrowRight, CalendarDays, Compass, Eye, EyeOff, ShieldCheck } from 'lucide-react'
 import { useForm } from 'react-hook-form'
-import { Navigate, useLocation, useNavigate } from 'react-router-dom'
+import { Link, Navigate, useLocation, useNavigate } from 'react-router-dom'
 import { z } from 'zod'
 import { Button, Field, LoadingState } from '../components/ui'
 import { inputClassName } from '../components/ui/styles'
@@ -25,13 +25,19 @@ export default function LoginPage() {
   const location = useLocation()
   const [error, setError] = useState<unknown>(null)
   const [showPassword, setShowPassword] = useState(false)
+  const loginController = useRef<AbortController | null>(null)
+  const mounted = useRef(false)
+  useEffect(() => { mounted.current = true; return () => { mounted.current = false; loginController.current?.abort() } }, [])
   const { register, handleSubmit, formState: { errors, isSubmitting } } = useForm<LoginValues>({ resolver: zodResolver(loginSchema), defaultValues: { email: '', password: '' } })
   const returnPath = safeReturnPath(location.state)
 
   async function onSubmit(values: LoginValues) {
     setError(null)
-    try { await login(values); navigate(returnPath, { replace: true }) }
-    catch (cause) { setError(cause) }
+    const controller = new AbortController()
+    loginController.current?.abort()
+    loginController.current = controller
+    try { await login(values, controller.signal); if (mounted.current) navigate(returnPath, { replace: true }) }
+    catch (cause) { if (mounted.current && !controller.signal.aborted) setError(cause) }
   }
 
   if (isLoading) return <LoadingState label="Checking your session…" />
@@ -48,7 +54,7 @@ export default function LoginPage() {
     <section className="flex flex-col justify-center px-6 py-12 sm:px-14 lg:px-12 xl:px-20"><div className="mx-auto w-full max-w-sm">
       <div className="mb-12 flex items-center gap-2 text-xl font-bold text-slate-900 lg:hidden"><Compass className="size-7 text-teal-700" />FieldOps Pro</div>
       <p className="mb-3 text-xs font-bold tracking-[0.15em] text-teal-700 uppercase">Your workspace awaits</p><h2 className="text-3xl font-bold tracking-tight text-slate-900">Welcome back</h2><p className="mt-3 text-sm leading-6 text-slate-500">Sign in to manage your organization’s operations.</p>
-      <form className="mt-8 space-y-5" noValidate onSubmit={handleSubmit(onSubmit)}>
+      <form className="mt-8 space-y-5" noValidate onSubmit={event => void handleSubmit(onSubmit)(event)}>
         {sessionMessage && <p role="status" className="rounded-xl border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900">{sessionMessage}</p>}
         {error != null && <p role="alert" className="rounded-xl border border-red-200 bg-red-50 p-3 text-sm text-red-800">{getErrorMessage(error)}</p>}
         <Field label="Email address" htmlFor="email" error={errors.email?.message}><input {...register('email')} id="email" type="email" autoComplete="username" autoFocus placeholder="you@organization.com" className={inputClassName} aria-invalid={!!errors.email} aria-describedby={errors.email ? 'email-error' : undefined} disabled={isSubmitting} /></Field>
@@ -56,7 +62,7 @@ export default function LoginPage() {
         <Button type="submit" busy={isSubmitting} className="w-full">{isSubmitting ? 'Signing in…' : 'Sign in'}{!isSubmitting && <ArrowRight className="size-4" />}</Button>
       </form>
       <p className="mt-6 flex items-center justify-center gap-2 text-xs text-slate-400"><ShieldCheck className="size-4" aria-hidden="true" />Access is managed by your organization.</p>
-      <div className="mt-12 border-t border-slate-100 pt-5"><p className="text-xs leading-6 text-slate-500">Need an account or organization access? Contact your organization’s administrator.</p></div>
+      <div className="mt-12 border-t border-slate-100 pt-5"><p className="text-sm leading-6 text-slate-500">New to FieldOps Pro? <Link to="/signup" className="font-semibold text-teal-700 underline underline-offset-4">Create an account</Link></p><p className="mt-2 text-xs leading-6 text-slate-500">After signing in, you can create an organization or request to join a discoverable team.</p></div>
     </div></section>
   </main>
 }

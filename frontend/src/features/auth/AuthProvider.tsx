@@ -1,12 +1,14 @@
-import { useEffect, useSyncExternalStore, type ReactNode } from 'react'
+import { useEffect, useRef, useSyncExternalStore, type ReactNode } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { apiRequest } from '../../services/api'
 import { getSession, setSessionToken, subscribeSession, tokenExpiresAt } from '../../services/session'
 import type { LoginCredentials, LoginResponse, User } from '../../types/api'
 import { AuthContext } from './authContext'
+import { isCurrentLoginAttempt } from './loginAttempt'
 
 export function AuthProvider({ children }: { children: ReactNode }) {
   const session = useSyncExternalStore(subscribeSession, getSession)
+  const loginAttempt = useRef(0)
   const profile = useQuery({
     queryKey: ['session', session.version, 'profile'],
     queryFn: ({ signal }) => apiRequest<User>('/auth/me', { signal }),
@@ -32,8 +34,12 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     return () => { clearTimeout(timer); window.removeEventListener('focus', onFocus) }
   }, [session.token])
 
-  async function login(values: LoginCredentials) {
-    const result = await apiRequest<LoginResponse>('/auth/login', { method: 'POST', body: values, auth: false })
+  async function login(values: LoginCredentials, signal?: AbortSignal) {
+    const attempt = { id: ++loginAttempt.current, sessionVersion: getSession().version }
+    const result = await apiRequest<LoginResponse>('/auth/login', { method: 'POST', body: values, auth: false, signal })
+    if (!isCurrentLoginAttempt(attempt, loginAttempt.current, getSession().version, Boolean(signal?.aborted))) {
+      throw new Error('This sign-in was superseded by a newer account or session action. Continue with your current session.')
+    }
     if (result.token_type?.toLowerCase() !== 'bearer' || !result.access_token || (tokenExpiresAt(result.access_token) ?? 0) <= Date.now()) {
       throw new Error('The API did not return a valid sign-in session. Please try again.')
     }

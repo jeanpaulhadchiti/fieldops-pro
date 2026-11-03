@@ -7,7 +7,7 @@ export interface AuthContextValue {
   isLoading: boolean
   error: unknown
   sessionMessage: string | null
-  login: (values: LoginCredentials) => Promise<void>
+  login: (values: LoginCredentials, signal?: AbortSignal) => Promise<void>
   logout: () => void
   retry: () => void
 }
