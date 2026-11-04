@@ -1,57 +1,164 @@
 
+import os
+
 from fastapi import FastAPI, HTTPException, Depends
+from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
-from app.routers.participants import router as participants_router
+
 from sqlalchemy import text, select, func
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
-from app.routers.events import router as events_router
+
 from app.database import engine, get_db
+from app.dependencies import get_current_user
+from app.validation import safe_request_validation_handler
+
+# Models
 from app.models.user import User
 from app.models.organization import Organization
 from app.models.membership import Membership
+
+# Existing Routers
 from app.routers.auth import router as auth_router
 from app.routers.organizations import router as organizations_router
+from app.routers.events import router as events_router
+from app.routers.participants import router as participants_router
 from app.routers.registrations import router as registrations_router
 from app.routers.tasks import router as tasks_router
 from app.routers.task_assignments import router as task_assignments_router
 from app.routers.bulk import router as bulk_router
 from app.routers.onboarding import router as onboarding_router
 from app.routers.archive import router as archive_router
-from app.services.archive import guard_workspace_mutation
 from app.routers.notifications import router as notifications_router
-from app.dependencies import get_current_user
-import os
+
+# Inventory Management Routers - Day 10
+from app.routers.inventory_categories import (
+    router as inventory_categories_router
+)
+from app.routers.storage_locations import (
+    router as storage_locations_router
+)
+from app.routers.inventory_items import (
+    router as inventory_items_router
+)
+from app.routers.inventory_movements import (
+    router as inventory_movements_router
+)
+
+# Shared Workspace Protection
+from app.services.archive import guard_workspace_mutation
 
 
-
+# =====================================================
+# FASTAPI APPLICATION
+# =====================================================
 
 app = FastAPI(
     title="FieldOps Pro API",
     version="0.1.0"
 )
 
+app.add_exception_handler(RequestValidationError, safe_request_validation_handler)
+
+
+# =====================================================
+# REGISTER EXISTING ROUTERS
+# =====================================================
+
 app.include_router(auth_router)
-app.include_router(organizations_router, dependencies=[Depends(guard_workspace_mutation)])
-app.include_router(events_router, dependencies=[Depends(guard_workspace_mutation)])
-app.include_router(participants_router, dependencies=[Depends(guard_workspace_mutation)])
-app.include_router(registrations_router, dependencies=[Depends(guard_workspace_mutation)])
-app.include_router(tasks_router, dependencies=[Depends(guard_workspace_mutation)])
-app.include_router(task_assignments_router, dependencies=[Depends(guard_workspace_mutation)])
-app.include_router(bulk_router, dependencies=[Depends(guard_workspace_mutation)])
-app.include_router(onboarding_router, dependencies=[Depends(guard_workspace_mutation)])
+
+app.include_router(
+    organizations_router,
+    dependencies=[Depends(guard_workspace_mutation)]
+)
+
+app.include_router(
+    events_router,
+    dependencies=[Depends(guard_workspace_mutation)]
+)
+
+app.include_router(
+    participants_router,
+    dependencies=[Depends(guard_workspace_mutation)]
+)
+
+app.include_router(
+    registrations_router,
+    dependencies=[Depends(guard_workspace_mutation)]
+)
+
+app.include_router(
+    tasks_router,
+    dependencies=[Depends(guard_workspace_mutation)]
+)
+
+app.include_router(
+    task_assignments_router,
+    dependencies=[Depends(guard_workspace_mutation)]
+)
+
+app.include_router(
+    bulk_router,
+    dependencies=[Depends(guard_workspace_mutation)]
+)
+
+app.include_router(
+    onboarding_router,
+    dependencies=[Depends(guard_workspace_mutation)]
+)
+
 app.include_router(archive_router)
+
 app.include_router(notifications_router)
 
 
+# =====================================================
+# DAY 10 - INVENTORY MANAGEMENT ROUTERS
+# =====================================================
+
+# Inventory Categories
+app.include_router(
+    inventory_categories_router,
+    dependencies=[Depends(guard_workspace_mutation)]
+)
+
+# Storage Locations
+app.include_router(
+    storage_locations_router,
+    dependencies=[Depends(guard_workspace_mutation)]
+)
+
+# Inventory Items
+app.include_router(
+    inventory_items_router,
+    dependencies=[Depends(guard_workspace_mutation)]
+)
+
+# Inventory Movements
+app.include_router(
+    inventory_movements_router,
+    dependencies=[Depends(guard_workspace_mutation)]
+)
+
+
+# =====================================================
+# CORS CONFIGURATION
+# =====================================================
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:5173"],
+    allow_origins=[
+        "http://localhost:5173"
+    ],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"]
 )
 
+
+# =====================================================
+# HEALTH ENDPOINTS
+# =====================================================
 
 @app.get("/health")
 def health():
@@ -78,19 +185,48 @@ def database_health():
             detail="Database unavailable"
         )
 
-    
-def require_dev_operator(current_user: User = Depends(get_current_user)):
-    # Legacy debugging remains available only by explicit deployment opt-in and
-    # a per-account operator allowlist. An ordinary signed-up account cannot use
-    # debug routes to bypass private organization discovery or tenant checks.
-    allowed = {value.strip() for value in os.getenv("FIELDOPS_DEV_USER_IDS", "").split(",") if value.strip()}
-    if os.getenv("FIELDOPS_ENABLE_DEV_ENDPOINTS", "").lower() != "true" or str(current_user.id) not in allowed:
-        raise HTTPException(404, "Not found")
+
+# =====================================================
+# DEVELOPMENT OPERATOR PROTECTION
+# =====================================================
+
+def require_dev_operator(
+    current_user: User = Depends(get_current_user)
+):
+    # Development endpoints require explicit opt-in
+    # and an authorized operator account.
+
+    allowed = {
+        value.strip()
+        for value in os.getenv(
+            "FIELDOPS_DEV_USER_IDS", ""
+        ).split(",")
+        if value.strip()
+    }
+
+    if (
+        os.getenv(
+            "FIELDOPS_ENABLE_DEV_ENDPOINTS", ""
+        ).lower() != "true"
+        or str(current_user.id) not in allowed
+    ):
+        raise HTTPException(
+            status_code=404,
+            detail="Not found"
+        )
+
     return current_user
 
 
+# =====================================================
+# DEVELOPMENT ENDPOINT - COUNT USERS
+# =====================================================
+
 @app.get("/dev/users/count")
-def count_users(db: Session = Depends(get_db), current_user: User = Depends(require_dev_operator)):
+def count_users(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_dev_operator)
+):
 
     total = db.scalar(
         select(func.count(User.id))
@@ -100,8 +236,16 @@ def count_users(db: Session = Depends(get_db), current_user: User = Depends(requ
         "total_users": total
     }
 
+
+# =====================================================
+# DEVELOPMENT ENDPOINT - TEST USER
+# =====================================================
+
 @app.get("/dev/users/test")
-def get_test_user(db: Session = Depends(get_db), current_user: User = Depends(require_dev_operator)):
+def get_test_user(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_dev_operator)
+):
 
     user = db.scalar(
         select(User).where(
@@ -121,9 +265,14 @@ def get_test_user(db: Session = Depends(get_db), current_user: User = Depends(re
     }
 
 
+# =====================================================
+# DEVELOPMENT ENDPOINT - DEMO MEMBERS
+# =====================================================
+
 @app.get("/dev/organizations/demo/members")
 def get_organization_members(
-    db: Session = Depends(get_db), current_user: User = Depends(require_dev_operator)
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_dev_operator)
 ):
 
     organization = db.scalar(
@@ -138,12 +287,19 @@ def get_organization_members(
             detail="Organization not found"
         )
 
-    membership = db.scalar(select(Membership).where(
-        Membership.organization_id == organization.id, Membership.user_id == current_user.id,
-        Membership.status == "active",
-    ))
+    membership = db.scalar(
+        select(Membership).where(
+            Membership.organization_id == organization.id,
+            Membership.user_id == current_user.id,
+            Membership.status == "active"
+        )
+    )
+
     if membership is None:
-        raise HTTPException(404, "Organization not found")
+        raise HTTPException(
+            status_code=404,
+            detail="Organization not found"
+        )
 
     members = db.execute(
         select(User.name, Membership.role)
@@ -159,8 +315,10 @@ def get_organization_members(
     return {
         "organization": organization.name,
         "members": [
-            {"name": name, "role": role}
+            {
+                "name": name,
+                "role": role
+            }
             for name, role in members
         ]
     }
-

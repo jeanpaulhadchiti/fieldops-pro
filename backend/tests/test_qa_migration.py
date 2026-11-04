@@ -18,7 +18,7 @@ class QAMigrationPreservation(onboarding.OnboardingMigrationPreservation):
         tables = {name: Table(name, MetaData(), autoload_with=self.engine) for name in names if name != 'alembic_version'}
         before = self.snapshot(tables)
         before_schema = self.schema_snapshot()
-        self.upgrade('head')
+        self.upgrade('e95a03')
         self.assertEqual(self.snapshot(tables), before, 'Every historical column and row must remain unchanged')
         after_schema = self.schema_snapshot()
         for name in bulk.DOMAIN_TABLES:
@@ -39,5 +39,5 @@ class QAMigrationPreservation(onboarding.OnboardingMigrationPreservation):
             self.assertEqual(connection.scalar(text('SELECT version_num FROM alembic_version')), 'e95a03')
         unique = inspector.get_unique_constraints('notifications')
         self.assertTrue(any(set(item['column_names']) == {'recipient_id', 'join_request_id'} for item in unique))
-        self.upgrade('head')
+        self.upgrade('e95a03')
         self.assertEqual(self.snapshot(tables), before, 'Repeated upgrade must preserve historical data')

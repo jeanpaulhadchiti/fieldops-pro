@@ -12,7 +12,7 @@ import re
 import secrets
 from contextlib import asynccontextmanager
 
-from sqlalchemy import create_engine, text
+from sqlalchemy import create_engine, event, text
 from sqlalchemy.engine import URL, make_url
 
 
@@ -44,54 +44,78 @@ def create_app():
     os.environ.setdefault("JWT_SECRET_KEY", secrets.token_urlsafe(48))
     os.environ.setdefault("POSTGRES_PASSWORD", secrets.token_urlsafe(24))
 
-    from fastapi import FastAPI, Depends
     from sqlalchemy.orm import Session
-    from app.database import get_db
+    from app.database import get_db, engine as development_engine
+    from app.main import app
     from app.models.base import Base
-    from app.routers.auth import router as auth_router
-    from app.routers.organizations import router as organizations_router
-    from app.routers.events import router as events_router
-    from app.routers.participants import router as participants_router
-    from app.routers.registrations import router as registrations_router
-    from app.routers.tasks import router as tasks_router
-    from app.routers.task_assignments import router as assignments_router
-    from app.routers.bulk import router as bulk_router
-    from app.routers.onboarding import router as onboarding_router
-    from app.routers.archive import router as archive_router
-    from app.services.archive import guard_workspace_mutation
-    from app.routers.notifications import router as notifications_router
 
     engine = create_engine(url, pool_pre_ping=True)
+
+    # Check the real connection identity before schema creation or HTTP writes.
+    with engine.connect() as connection:
+        if connection.scalar(text("SELECT current_database()")) != url.database:
+            engine.dispose()
+            raise RuntimeError("Disposable database identity mismatch; no writes performed")
     Base.metadata.create_all(engine)
+
+    if not event.contains(development_engine, "do_connect", _forbid_development_connection):
+        event.listen(development_engine, "do_connect", _forbid_development_connection)
+
+    production_lifespan = app.router.lifespan_context
 
     @asynccontextmanager
     async def lifespan(_app):
-        yield
-        engine.dispose()
+        try:
+            async with production_lifespan(_app):
+                yield
+        finally:
+            engine.dispose()
 
-    app = FastAPI(title="FieldOps Pro isolated Day 9 test API", lifespan=lifespan)
+    app.router.lifespan_context = lifespan
     app.state.test_engine = engine
     app.state.test_database_name = url.database
 
     def isolated_db():
         with Session(engine, autoflush=False) as db:
+            if db.scalar(text("SELECT current_database()")) != url.database:
+                raise RuntimeError("Disposable database identity mismatch")
             yield db
 
     app.dependency_overrides[get_db] = isolated_db
-    for router in (
-        auth_router, organizations_router, events_router, participants_router,
-        registrations_router, tasks_router, assignments_router, bulk_router, onboarding_router, notifications_router,
-    ):
-        app.include_router(router, dependencies=[] if router is auth_router else [Depends(guard_workspace_mutation)])
-    app.include_router(archive_router)
+    # Production owns every route, dependency and exception handler. Only the
+    # public health probe adds database identity for the pre-write test check.
+    return _IsolatedHealthApp(app, engine, url.database)
 
-    @app.get("/health")
-    def health():
-        with engine.connect() as connection:
-            connection.execute(text("SELECT 1"))
-        return {
-            "status": "ok", "application": "FieldOps Pro",
-            "test_database": url.database, "database_type": "postgresql",
-        }
 
-    return app
+def _forbid_development_connection(*_args, **_kwargs):
+    raise AssertionError("The isolated API must never connect to the development engine")
+
+
+class _IsolatedHealthApp:
+    def __init__(self, application, engine, database_name):
+        self.application = application
+        self.engine = engine
+        self.database_name = database_name
+
+    def __getattr__(self, name):
+        return getattr(self.application, name)
+
+    async def __call__(self, scope, receive, send):
+        if scope["type"] == "http" and scope["method"] == "GET" and scope["path"] == "/health":
+            from starlette.concurrency import run_in_threadpool
+            from starlette.responses import JSONResponse
+
+            def health():
+                with self.engine.connect() as connection:
+                    actual = connection.scalar(text("SELECT current_database()"))
+                if actual != self.database_name:
+                    raise RuntimeError("Disposable database identity mismatch")
+                return {
+                    "status": "ok", "application": "FieldOps Pro",
+                    "test_database": actual, "database_type": "postgresql",
+                }
+
+            response = JSONResponse(await run_in_threadpool(health))
+            await response(scope, receive, send)
+            return
+        await self.application(scope, receive, send)
