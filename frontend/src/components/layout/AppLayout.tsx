@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
-import { Building2, CalendarDays, ChevronDown, ClipboardList, Compass, LayoutDashboard, LogOut, Menu, Settings, ShieldCheck, Users, X } from 'lucide-react'
+import { Building2, CalendarDays, ChevronDown, ClipboardList, Compass, LayoutDashboard, LogOut, Menu, Settings, Package, ShieldCheck, Users, X } from 'lucide-react'
 import { NavLink, Outlet, useLocation, useNavigate } from 'react-router-dom'
 import { useAuth } from '../../features/auth/useAuth'
 import { useOrganization } from '../../features/organizations/useOrganization'
@@ -58,6 +58,7 @@ export default function AppLayout() {
       { to: '/events', label: 'Events', icon: CalendarDays },
       { to: '/participants', label: 'Participants', icon: Users },
       { to: '/tasks', label: 'Tasks', icon: ClipboardList },
+      { to: '/inventory', label: 'Inventory', icon: Package },
       ...(canManageEvents || ['Owner', 'Admin'].includes(membership?.role ?? '') ? [{ to: '/settings/members', label: 'Settings', icon: Settings }] : []),
     ].map(({ to, label, icon: Icon }) => <NavLink key={to} to={to} onClick={closeMenu} className={({ isActive }) => `group flex items-center gap-3 rounded-xl px-3.5 py-3 text-sm font-medium transition-colors ${isActive ? 'bg-teal-400/15 text-teal-300 ring-1 ring-inset ring-teal-400/15' : 'text-slate-400 hover:bg-white/5 hover:text-white'}`}>
       <Icon className="size-[19px]" aria-hidden="true" />{label}

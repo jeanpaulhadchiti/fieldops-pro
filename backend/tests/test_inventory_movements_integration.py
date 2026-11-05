@@ -162,6 +162,35 @@ class InventoryMovementIntegration(unittest.TestCase):
         page = self.call(owner, "GET", f"{MOVES}?organization_id={org['id']}&limit=2&offset=1")
         self.assertEqual([r["id"] for r in page], [r["id"] for r in history[1:3]])
 
+    def test_history_beyond_default_page_preserves_exact_decimal_chain_and_scope(self):
+        owner, org = self.workspace()
+        outsider, foreign = self.workspace()
+        item = self.item(owner, org)
+        for _ in range(121):
+            self.move(owner, org, item, "receive", "0.01")
+        foreign_item = self.item(outsider, foreign)
+        self.move(outsider, foreign, foreign_item, "receive", "5")
+        path = f"{MOVES}?organization_id={org['id']}&item_id={item['id']}"
+        first = self.call(owner, "GET", path)
+        second = self.call(owner, "GET", path + "&offset=100")
+        history = first + second
+        self.assertEqual((len(first), len(second)), (100, 21))
+        self.assertEqual([row["sequence_number"] for row in history], list(range(121, 0, -1)))
+        self.assertEqual(len({row["id"] for row in history}), 121)
+        balance = Decimal("0")
+        for row in reversed(history):
+            self.assertEqual(row["organization_id"], org["id"])
+            self.assertEqual(row["item_id"], item["id"])
+            self.assertEqual(Decimal(row["quantity_before"]), balance)
+            balance += Decimal("0.01")
+            self.assertEqual(Decimal(row["quantity_after"]), balance)
+        self.assertEqual(balance, Decimal("1.21"))
+        self.assertEqual(self.call(owner, "GET", path + "&offset=121"), [])
+        self.call(outsider, "GET", path, expected=404)
+        self.call(outsider, "GET", f"{MOVES}/{history[0]['id']}?organization_id={foreign['id']}", expected=404)
+        for invalid in ("&limit=0", "&limit=501", "&offset=-1"):
+            self.call(owner, "GET", path + invalid, expected=422)
+
     def test_item_and_organization_archive_races_preserve_lock_order_and_history(self):
         owner, org = self.workspace()
         for scope in ("item", "organization"):

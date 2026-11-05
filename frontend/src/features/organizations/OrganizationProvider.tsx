@@ -34,7 +34,7 @@ export function OrganizationProvider({ children }: { children: ReactNode }) {
     const currentOrganizations = queryClient.getQueryData<Organization[]>(['organizations', user!.id]) ?? organizations
     if (!currentOrganizations.some(org => org.id === id)) return
     // Queries use organization-specific keys, and old requests are aborted on a switch.
-    const scopedQueries = new Set(['events', 'organization-members', 'participants', 'registrations', 'tasks', 'task-assignments', 'organization-settings', 'organization-join-requests'])
+    const scopedQueries = new Set(['inventory', 'events', 'organization-members', 'participants', 'registrations', 'tasks', 'task-assignments', 'organization-settings', 'organization-join-requests'])
     void queryClient.cancelQueries({ predicate: query => scopedQueries.has(String(query.queryKey[0])) })
     setSelectedId(id)
     selectionGeneration.current += 1

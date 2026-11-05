@@ -18,6 +18,7 @@ const NotFoundPage = lazy(() => import('./pages/NotFoundPage'))
 const ParticipantsPage = lazy(() => import('./pages/ParticipantsPage'))
 const ParticipantDetailPage = lazy(() => import('./pages/ParticipantDetailPage'))
 const TasksPage = lazy(() => import('./pages/TasksPage'))
+const InventoryPage = lazy(() => import('./pages/InventoryPage'))
 
 export default function App() {
   return (
@@ -36,6 +37,7 @@ export default function App() {
             <Route path="participants" element={<ParticipantsPage />} />
             <Route path="participants/:participantId" element={<ParticipantDetailPage />} />
             <Route path="tasks" element={<TasksPage />} />
+            <Route path="inventory" element={<InventoryPage />} />
             <Route path="settings/members" element={<OrganizationSettingsPage />} />
           </Route>
           <Route path="*" element={<NotFoundPage />} />

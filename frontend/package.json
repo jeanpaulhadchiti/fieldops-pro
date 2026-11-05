@@ -7,10 +7,11 @@
     "dev": "vite",
     "build": "tsc -b && vite build",
     "lint": "eslint .",
-    "test": "node --test tests/day8.test.mjs tests/day9.test.mjs tests/bulk-registration.test.mjs tests/participant-import.test.mjs tests/onboarding.test.mjs tests/onboarding-admin.test.mjs tests/notifications.test.mjs",
+    "test": "node --test tests/day8.test.mjs tests/day9.test.mjs tests/bulk-registration.test.mjs tests/participant-import.test.mjs tests/onboarding.test.mjs tests/onboarding-admin.test.mjs tests/notifications.test.mjs tests/inventory-forms.test.mjs tests/inventory.test.mjs",
     "test:browser": "node tests/day9.browser.mjs",
     "test:browser:onboarding": "node tests/onboarding.browser.mjs",
     "test:browser:qa": "node tests/qa-improvements.browser.mjs",
+    "test:browser:inventory": "node tests/inventory.browser.mjs",
     "preview": "vite preview"
   },
   "dependencies": {

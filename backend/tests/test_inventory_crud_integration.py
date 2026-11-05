@@ -248,6 +248,51 @@ class InventoryCRUDIntegration(unittest.TestCase):
         self.call(owner, "PATCH", self.path("items", item, org), {"name": "Restored"})
         self.assertEqual({row["id"] for row in self.call(owner, "GET", history_path)}, ids)
 
+    def test_item_pagination_beyond_default_page_keeps_archive_and_filters_scoped(self):
+        owner, org = self.workspace()
+        foreign_owner, foreign = self.workspace()
+        category = self.create(owner, org, "categories")
+        location = self.create(owner, org, "locations")
+        items = [self.create(owner, org, "items", name=f"Equipment {index:03}",
+                             category_id=category["id"], location_id=location["id"],
+                             minimum_quantity="0.01" if index % 2 else "0")
+                 for index in range(121)]
+        archived = items[-1]
+        self.call(owner, "DELETE", self.path("items", archived, org), expected=204)
+        self.create(foreign_owner, foreign, "items", name="Equipment 000", minimum_quantity="1")
+        path = f"{PREFIX}/items?organization_id={org['id']}"
+        first = self.call(owner, "GET", path)
+        second = self.call(owner, "GET", path + "&limit=100&offset=100")
+        self.assertEqual((len(first), len(second)), (100, 20))
+        self.assertEqual([row["id"] for row in first + second], [item["id"] for item in items[:-1]])
+        self.assertEqual(self.call(owner, "GET", path + "&offset=120"), [])
+        self.assertEqual([row["id"] for row in self.call(owner, "GET", path + "&archived=true")], [archived["id"]])
+        filtered = self.call(owner, "GET", path + "&low_stock_only=true"
+                             + f"&category_id={category['id']}&location_id={location['id']}&limit=500")
+        self.assertEqual([row["id"] for row in filtered], [item["id"] for item in items[:-1] if Decimal(item["minimum_quantity"]) > 0])
+        # Equality is deliberately excluded from low-stock results, including 0 == 0.
+        self.assertEqual(len(filtered), 60)
+        self.call(owner, "POST", self.path("items", archived, org, "/restore"))
+        self.assertEqual(len(self.call(owner, "GET", path + "&limit=500")), 121)
+
+    def test_nullable_item_assignments_release_unused_references_after_restore(self):
+        owner, org = self.workspace()
+        category = self.create(owner, org, "categories")
+        location = self.create(owner, org, "locations")
+        item = self.create(owner, org, "items", category_id=category["id"], location_id=location["id"])
+        self.call(owner, "DELETE", self.path("items", item, org), expected=204)
+        for family, resource in (("categories", category), ("locations", location)):
+            self.call(owner, "DELETE", self.path(family, resource, org), expected=409)
+        self.call(owner, "POST", self.path("items", item, org, "/restore"))
+        cleared = self.call(owner, "PATCH", self.path("items", item, org), {"category_id": None, "location_id": None})
+        self.assertIsNone(cleared["category_id"])
+        self.assertIsNone(cleared["location_id"])
+        for family, resource in (("categories", category), ("locations", location)):
+            self.call(owner, "DELETE", self.path(family, resource, org), expected=204)
+        saved = self.call(owner, "GET", self.path("items", item, org))
+        self.assertIsNone(saved["category_id"])
+        self.assertIsNone(saved["location_id"])
+
     def test_every_archived_write_has_canonical_scope_and_unchanged_rows(self):
         owner, org = self.workspace()
         _, active = self.workspace(owner=owner)

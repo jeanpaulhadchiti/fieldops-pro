@@ -56,3 +56,108 @@ export interface EventCreate {
   end_at: string
   capacity: number | null
 }
+
+
+export type InventoryItemType = 'consumable' | 'reusable'
+
+export interface InventoryItemRecord {
+  id: string
+  organization_id: string
+  category_id: string | null
+  location_id: string | null
+  name: string
+  sku: string | null
+  unit: string
+  item_type: InventoryItemType
+  current_quantity: string
+  minimum_quantity: string
+  archived: boolean
+  created_at: string
+}
+
+export interface InventoryCategoryRecord {
+  id: string
+  organization_id: string
+  name: string
+  description: string | null
+  created_at: string
+}
+
+export interface StorageLocationRecord {
+  id: string
+  organization_id: string
+  name: string
+  description: string | null
+  created_at: string
+}
+
+export type InventoryMovementType =
+  | 'opening'
+  | 'receive'
+  | 'issue'
+  | 'return'
+  | 'adjustment'
+
+export interface InventoryMovementRecord {
+  id: string
+  organization_id: string
+  item_id: string
+  sequence_number: number
+  movement_type: InventoryMovementType
+  quantity_delta: string
+  quantity_before: string
+  quantity_after: string
+  actor_id: string | null
+  notes: string | null
+  created_at: string
+}
+
+
+export interface InventoryItemCreate {
+  organization_id: string
+  category_id?: string | null
+  location_id?: string | null
+  name: string
+  sku?: string | null
+  unit: string
+  item_type: InventoryItemType
+  minimum_quantity: string
+}
+
+
+export interface InventoryItemUpdate {
+  name?: string
+  sku?: string | null
+  category_id?: string | null
+  location_id?: string | null
+  unit?: string
+  item_type?: InventoryItemType
+  minimum_quantity?: string
+}
+
+
+export interface InventoryCategoryCreate {
+  organization_id: string
+  name: string
+  description?: string | null
+}
+
+
+export interface StorageLocationCreate {
+  organization_id: string
+  name: string
+  description?: string | null
+}
+
+export interface InventoryTaxonomyUpdate {
+  name: string
+  description: string | null
+}
+
+export interface InventoryMovementCreate {
+  organization_id: string
+  item_id: string
+  movement_type: InventoryMovementType
+  quantity_delta: string
+  notes: string | null
+}
